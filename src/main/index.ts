@@ -19,7 +19,9 @@ function createWindow() {
   })
 
   if (process.argv.includes('--dev')) {
-    mainWindow.loadURL('http://localhost:5173')
+    // 尝试多个端口，Vite 可能会自动切换端口
+    const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
+    mainWindow.loadURL(devUrl)
     mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
