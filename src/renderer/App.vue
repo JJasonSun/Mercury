@@ -7,15 +7,22 @@
         :selectedFeedId="selectedFeedId"
         :tags="tags"
         :selectedTag="selectedTag"
+        :isRefreshing="isRefreshing"
         @select-feed="handleSelectFeed"
         @select-tag="handleSelectTag"
         @add-feed="handleAddFeed"
+        @edit-feed="handleEditFeed"
+        @import-opml="openOpmlDialog"
+        @export-opml="handleExportOpml"
         @refresh="handleRefresh"
       />
       <ArticleList
         :articles="articles"
-      :selectedArticleId="selectedArticleId"
+        :selectedArticleId="selectedArticleId"
+        :filter="articleFilter"
+        :isLoading="isLoadingArticles"
         @select-article="handleSelectArticle"
+        @change-filter="articleFilter = $event"
       />
       <ReaderView
         :article="selectedArticle"
@@ -28,32 +35,75 @@
 
     <!-- 设置页面 -->
     <SettingsView v-if="showSettings" @close="showSettings = false" />
+    <AddSubscriptionDialog
+      v-if="showAddSubscription"
+      :isLoading="isAddingFeed"
+      :error="feedDialogError"
+      @close="closeAddSubscription"
+      @submit="submitAddFeed"
+    />
+    <EditSubscriptionDialog
+      v-if="editingFeed"
+      :feed="editingFeed"
+      :isLoading="isEditingFeed"
+      :error="editDialogError"
+      @close="closeEditSubscription"
+      @submit="submitEditFeed"
+      @reset-title="resetEditingFeedTitle"
+      @delete="deleteEditingFeed"
+    />
+    <OpmlImportDialog
+      v-if="showOpmlDialog"
+      :filePath="opmlFilePath"
+      :feeds="opmlPreviewFeeds"
+      :progress="opmlImportProgress"
+      :isLoading="isImportingOpml"
+      :error="opmlDialogError"
+      @close="closeOpmlDialog"
+      @select-file="selectOpmlFile"
+      @file-dropped="previewDroppedOpmlFile"
+      @import="importSelectedOpmlFeeds"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import FeedSidebar from './components/FeedSidebar.vue'
 import ArticleList from './components/ArticleList.vue'
 import ReaderView from './components/ReaderView.vue'
 import SettingsView from './components/SettingsView.vue'
+import AddSubscriptionDialog from './components/AddSubscriptionDialog.vue'
+import EditSubscriptionDialog from './components/EditSubscriptionDialog.vue'
+import OpmlImportDialog from './components/OpmlImportDialog.vue'
+import type { Article, ArticleContent, Feed, OpmlFeed, Tag } from '../main/types'
+import type { ArticleFilter } from './components/ArticleList.vue'
+
+type OpmlImportProgressItem = {
+  title: string
+  url: string
+  status: 'pending' | 'importing' | 'success' | 'failed'
+  message?: string
+}
 
 // Mock 数据
-const feeds = ref([
-  { id: '1', title: 'Hacker News', url: 'news.ycombinator.com', unreadCount: 12 },
-  { id: '2', title: '阮一峰的网络日志', url: 'ruanyifeng.com/blog', unreadCount: 5 },
-  { id: '3', title: '少数派', url: 'sspai.com', unreadCount: 8 }
-])
+const mockFeeds: Feed[] = [
+  { id: '1', title: 'Hacker News', sourceTitle: 'Hacker News', url: 'news.ycombinator.com', unreadCount: 12 },
+  { id: '2', title: '阮一峰的网络日志', sourceTitle: '阮一峰的网络日志', url: 'ruanyifeng.com/blog', unreadCount: 5 },
+  { id: '3', title: '少数派', sourceTitle: '少数派', url: 'sspai.com', unreadCount: 8 }
+]
 
-const tags = ref([
+const feeds = ref<Feed[]>(mockFeeds)
+
+const tags = ref<Tag[]>([
   { id: '1', name: '全部', count: 25 },
   { id: '2', name: '技术', count: 12 },
   { id: '3', name: '设计', count: 8 },
   { id: '4', name: '产品', count: 5 }
 ])
 
-const mockArticles = [
+const mockArticles: Article[] = [
   {
     id: '1',
     feedId: '1',
@@ -86,7 +136,7 @@ const mockArticles = [
   }
 ]
 
-const mockArticleContent = {
+const mockArticleContent: ArticleContent = {
   id: '1',
   title: 'Show HN: I built a RSS reader with AI features',
   author: 'johndoe',
@@ -114,38 +164,466 @@ const mockArticleContent = {
 const selectedFeedId = ref('1')
 const selectedTag = ref('全部')
 const selectedArticleId = ref('1')
+const selectedArticleContent = ref<ArticleContent | null>(mockArticleContent)
+const articleList = ref<Article[]>(mockArticles)
 const showSettings = ref(false)
+const useMockData = ref(true)
+const articleFilter = ref<ArticleFilter>('all')
+const isLoadingArticles = ref(false)
+const isRefreshing = ref(false)
+const showAddSubscription = ref(false)
+const isAddingFeed = ref(false)
+const feedDialogError = ref('')
+const editingFeed = ref<Feed | null>(null)
+const isEditingFeed = ref(false)
+const editDialogError = ref('')
+const showOpmlDialog = ref(false)
+const isImportingOpml = ref(false)
+const opmlDialogError = ref('')
+const opmlFilePath = ref('')
+const opmlPreviewFeeds = ref<OpmlFeed[]>([])
+const opmlImportProgress = ref<OpmlImportProgressItem[]>([])
 
 const articles = computed(() => {
-  return mockArticles.filter(a => a.feedId === selectedFeedId.value)
+  let filteredArticles = articleList.value
+
+  if (selectedTag.value !== '全部') {
+    filteredArticles = filteredArticles.filter((article) => article.tags.includes(selectedTag.value))
+  }
+
+  if (articleFilter.value === 'unread') {
+    return filteredArticles.filter((article) => !article.isRead)
+  }
+
+  if (articleFilter.value === 'read') {
+    return filteredArticles.filter((article) => article.isRead)
+  }
+
+  return filteredArticles
 })
 
 const selectedArticle = computed(() => {
-  if (selectedArticleId.value) {
-    return mockArticleContent
-  }
-  return null
+  return selectedArticleContent.value
 })
 
-const handleSelectFeed = (feedId: string) => {
+onMounted(() => {
+  void loadFeeds()
+})
+
+const loadFeeds = async () => {
+  if (!window.electronAPI) {
+    return
+  }
+
+  try {
+    const loadedFeeds = await window.electronAPI.getFeedList()
+    useMockData.value = false
+    feeds.value = loadedFeeds
+
+    if (loadedFeeds.length > 0) {
+      selectedFeedId.value = loadedFeeds[0].id
+      await loadArticles(selectedFeedId.value)
+    } else {
+      articleList.value = []
+      selectedArticleId.value = ''
+      selectedArticleContent.value = null
+    }
+  } catch (error) {
+    console.error('Failed to load feeds, fallback to mock data', error)
+  }
+}
+
+const loadArticles = async (feedId: string) => {
+  isLoadingArticles.value = true
+  if (!window.electronAPI || useMockData.value) {
+    articleList.value = mockArticles.filter((article) => article.feedId === feedId)
+    isLoadingArticles.value = false
+    return
+  }
+
+  try {
+    articleList.value = await window.electronAPI.getArticleList(feedId)
+    selectedArticleId.value = ''
+    selectedArticleContent.value = null
+  } finally {
+    isLoadingArticles.value = false
+  }
+}
+
+const handleSelectFeed = async (feedId: string) => {
   selectedFeedId.value = feedId
   selectedArticleId.value = ''
+  selectedArticleContent.value = null
+  await loadArticles(feedId)
 }
 
 const handleSelectTag = (tagName: string) => {
   selectedTag.value = tagName
 }
 
-const handleSelectArticle = (articleId: string) => {
+const handleSelectArticle = async (articleId: string) => {
   selectedArticleId.value = articleId
+  if (!window.electronAPI || useMockData.value) {
+    selectedArticleContent.value = mockArticleContent
+    return
+  }
+
+  try {
+    selectedArticleContent.value = await window.electronAPI.getArticleContent(articleId)
+    await window.electronAPI.markArticleRead(articleId)
+    articleList.value = articleList.value.map((article) =>
+      article.id === articleId ? { ...article, isRead: true } : article
+    )
+    feeds.value = await window.electronAPI.getFeedList()
+  } catch (error) {
+    console.error('Failed to load article content', error)
+    alert(`加载文章失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
-const handleAddFeed = () => {
-  alert('添加订阅功能（占位）')
+const handleAddFeed = async () => {
+  feedDialogError.value = ''
+  showAddSubscription.value = true
 }
 
-const handleRefresh = () => {
-  alert('刷新功能（占位）')
+const closeAddSubscription = () => {
+  if (isAddingFeed.value) {
+    return
+  }
+
+  showAddSubscription.value = false
+  feedDialogError.value = ''
+}
+
+const submitAddFeed = async (payload: { url: string; title?: string }) => {
+  if (!window.electronAPI) {
+    feedDialogError.value = '当前环境不支持添加订阅'
+    return
+  }
+
+  if (!payload.url) {
+    feedDialogError.value = '请输入订阅源 URL'
+    return
+  }
+
+  isAddingFeed.value = true
+  feedDialogError.value = ''
+  try {
+    let feed = await window.electronAPI.addFeed(payload.url)
+    if (payload.title) {
+      feed = await window.electronAPI.updateFeed(feed.id, { title: payload.title })
+    }
+    useMockData.value = false
+    await loadFeeds()
+    selectedFeedId.value = feed.id
+    await loadArticles(feed.id)
+    showAddSubscription.value = false
+  } catch (error) {
+    console.error('Failed to add feed', error)
+    feedDialogError.value = `添加订阅失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isAddingFeed.value = false
+  }
+}
+
+const handleRefresh = async () => {
+  if (!window.electronAPI || !selectedFeedId.value) {
+    alert('当前环境不支持刷新')
+    return
+  }
+
+  isRefreshing.value = true
+  try {
+    articleList.value = await window.electronAPI.refreshFeed(selectedFeedId.value)
+    feeds.value = await window.electronAPI.getFeedList()
+    selectedArticleId.value = ''
+    selectedArticleContent.value = null
+  } catch (error) {
+    console.error('Failed to refresh feed', error)
+    alert(`刷新失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
+const handleEditFeed = (feedId: string) => {
+  const feed = feeds.value.find((item) => item.id === feedId)
+  if (!feed) {
+    return
+  }
+
+  editDialogError.value = ''
+  editingFeed.value = feed
+}
+
+const closeEditSubscription = () => {
+  if (isEditingFeed.value) {
+    return
+  }
+
+  editingFeed.value = null
+  editDialogError.value = ''
+}
+
+const submitEditFeed = async (updates: { title: string; refreshIntervalMinutes: number }) => {
+  if (!window.electronAPI || !editingFeed.value) {
+    editDialogError.value = '当前环境不支持编辑订阅'
+    return
+  }
+
+  isEditingFeed.value = true
+  editDialogError.value = ''
+  try {
+    const updatedFeed = await window.electronAPI.updateFeed(editingFeed.value.id, {
+      title: updates.title,
+      refreshIntervalMinutes: updates.refreshIntervalMinutes
+    })
+    feeds.value = await window.electronAPI.getFeedList()
+    editingFeed.value = updatedFeed
+    editingFeed.value = null
+  } catch (error) {
+    console.error('Failed to update feed', error)
+    editDialogError.value = `保存失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isEditingFeed.value = false
+  }
+}
+
+const resetEditingFeedTitle = async () => {
+  if (!window.electronAPI || !editingFeed.value) {
+    editDialogError.value = '当前环境不支持恢复名称'
+    return
+  }
+
+  isEditingFeed.value = true
+  editDialogError.value = ''
+  try {
+    const updatedFeed = await window.electronAPI.resetFeedTitle(editingFeed.value.id)
+    feeds.value = await window.electronAPI.getFeedList()
+    editingFeed.value = updatedFeed
+  } catch (error) {
+    console.error('Failed to reset feed title', error)
+    editDialogError.value = `恢复失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isEditingFeed.value = false
+  }
+}
+
+const deleteEditingFeed = async () => {
+  if (!window.electronAPI || !editingFeed.value) {
+    editDialogError.value = '当前环境不支持删除订阅'
+    return
+  }
+
+  const shouldDelete = confirm(`确定删除“${editingFeed.value.title}”吗？该源下文章也会被删除。`)
+  if (!shouldDelete) {
+    return
+  }
+
+  isEditingFeed.value = true
+  editDialogError.value = ''
+  try {
+    const deletedId = editingFeed.value.id
+    await window.electronAPI.deleteFeed(deletedId)
+    feeds.value = await window.electronAPI.getFeedList()
+    if (selectedFeedId.value === deletedId) {
+      const nextFeed = feeds.value[0]
+      selectedFeedId.value = nextFeed?.id ?? ''
+      if (nextFeed) {
+        await loadArticles(nextFeed.id)
+      } else {
+        articleList.value = []
+        selectedArticleId.value = ''
+        selectedArticleContent.value = null
+      }
+    }
+    editingFeed.value = null
+  } catch (error) {
+    console.error('Failed to delete feed', error)
+    editDialogError.value = `删除失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isEditingFeed.value = false
+  }
+}
+
+const openOpmlDialog = () => {
+  opmlDialogError.value = ''
+  opmlFilePath.value = ''
+  opmlPreviewFeeds.value = []
+  opmlImportProgress.value = []
+  showOpmlDialog.value = true
+}
+
+const closeOpmlDialog = () => {
+  if (isImportingOpml.value) {
+    return
+  }
+
+  showOpmlDialog.value = false
+  opmlDialogError.value = ''
+  opmlFilePath.value = ''
+  opmlPreviewFeeds.value = []
+  opmlImportProgress.value = []
+}
+
+const previewOpmlFile = async (filePath: string) => {
+  if (!window.electronAPI) {
+    opmlDialogError.value = '当前环境不支持选择 OPML 文件'
+    return
+  }
+
+  isImportingOpml.value = true
+  opmlDialogError.value = ''
+  opmlImportProgress.value = []
+  try {
+    opmlFilePath.value = filePath
+    opmlPreviewFeeds.value = await window.electronAPI.previewOpml(filePath)
+    if (opmlPreviewFeeds.value.length === 0) {
+      opmlDialogError.value = '该 OPML 文件中没有找到订阅源'
+    }
+  } catch (error) {
+    console.error('Failed to preview OPML', error)
+    opmlDialogError.value = `预览失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isImportingOpml.value = false
+  }
+}
+
+const selectOpmlFile = async () => {
+  if (!window.electronAPI) {
+    opmlDialogError.value = '当前环境不支持选择 OPML 文件'
+    return
+  }
+
+  opmlDialogError.value = ''
+  try {
+    const filePath = await window.electronAPI.selectOpmlFile()
+    if (!filePath) {
+      return
+    }
+    await previewOpmlFile(filePath)
+  } catch (error) {
+    console.error('Failed to preview OPML', error)
+    opmlDialogError.value = `预览失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isImportingOpml.value = false
+  }
+}
+
+const previewDroppedOpmlFile = async (file: File) => {
+  if (!window.electronAPI) {
+    opmlDialogError.value = '当前环境不支持拖拽导入 OPML'
+    return
+  }
+
+  const filePath = window.electronAPI.getPathForFile(file)
+  if (!filePath) {
+    opmlDialogError.value = '无法读取拖拽文件路径，请使用点击选择文件'
+    return
+  }
+
+  await previewOpmlFile(filePath)
+}
+
+const importSelectedOpmlFeeds = async (selectedFeeds: OpmlFeed[]) => {
+  if (!window.electronAPI) {
+    opmlDialogError.value = '当前环境不支持导入 OPML'
+    return
+  }
+
+  if (selectedFeeds.length === 0) {
+    opmlDialogError.value = '请选择至少一个订阅源'
+    return
+  }
+
+  isImportingOpml.value = true
+  opmlDialogError.value = ''
+  opmlImportProgress.value = selectedFeeds.map((feed) => ({
+    title: String(feed.title || feed.url),
+    url: String(feed.url),
+    status: 'pending'
+  }))
+  try {
+    const importedFeeds: Feed[] = []
+    const failures: string[] = []
+
+    for (const [index, feed] of selectedFeeds.entries()) {
+      opmlImportProgress.value[index] = {
+        ...opmlImportProgress.value[index],
+        status: 'importing',
+        message: '导入中'
+      }
+
+      const feedForImport = {
+        title: String(feed.title || feed.url),
+        url: String(feed.url)
+      }
+
+      const importResult = await window.electronAPI.importOpmlFeeds([feedForImport])
+      const failure = importResult.failures[0]
+      if (failure) {
+        opmlImportProgress.value[index] = {
+          ...opmlImportProgress.value[index],
+          status: 'failed',
+          message: failure.error
+        }
+        failures.push(`${failure.title || failure.url}：${failure.error}`)
+        continue
+      }
+
+      const importedFeed = importResult.feeds[0]
+      if (importedFeed) {
+        importedFeeds.push(importedFeed)
+      }
+      opmlImportProgress.value[index] = {
+        ...opmlImportProgress.value[index],
+        status: 'success',
+        message: '已导入'
+      }
+    }
+
+    useMockData.value = false
+    feeds.value = await window.electronAPI.getFeedList()
+    const firstImported = importedFeeds[0]
+    if (firstImported) {
+      selectedFeedId.value = firstImported.id
+      await loadArticles(firstImported.id)
+    }
+
+    if (failures.length > 0) {
+      opmlDialogError.value = [
+        `已导入 ${importedFeeds.length} 个订阅源，${failures.length} 个失败。`,
+        ...failures
+      ].join('\n')
+      return
+    }
+
+    showOpmlDialog.value = false
+  } catch (error) {
+    console.error('Failed to import OPML', error)
+    opmlDialogError.value = `导入失败：${error instanceof Error ? error.message : String(error)}`
+  } finally {
+    isImportingOpml.value = false
+  }
+}
+
+const handleExportOpml = async () => {
+  if (!window.electronAPI) {
+    alert('当前环境不支持导出 OPML')
+    return
+  }
+
+  try {
+    const filePath = await window.electronAPI.selectOpmlExportPath()
+    if (!filePath) {
+      return
+    }
+    await window.electronAPI.exportOpml(filePath)
+    alert('OPML 导出成功')
+  } catch (error) {
+    console.error('Failed to export OPML', error)
+    alert(`导出失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const handleSummarize = () => {

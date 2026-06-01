@@ -2,8 +2,22 @@
   <div class="feed-sidebar">
   <div class="sidebar-header">
       <div class="sidebar-actions">
-      <button class="btn btn-primary" @click="$emit('add-feed')">+ 添加订阅</button>
-     <button class="btn" @click="$emit('refresh')">刷新</button>
+      <button class="btn btn-primary" @click="$emit('add-feed')">
+        <Plus :size="15" />
+        <span>添加订阅</span>
+      </button>
+     <button class="btn" @click="$emit('refresh')" :disabled="isRefreshing || !selectedFeedId">
+        <RefreshCw :size="15" :class="{ spinning: isRefreshing }" />
+        <span>{{ isRefreshing ? '刷新中' : '刷新' }}</span>
+      </button>
+      <button class="btn" @click="$emit('import-opml')">
+        <FolderInput :size="15" />
+        <span>导入 OPML</span>
+      </button>
+      <button class="btn" @click="$emit('export-opml')" :disabled="feeds.length === 0">
+        <Download :size="15" />
+        <span>导出 OPML</span>
+      </button>
       </div>
     </div>
 
@@ -22,7 +36,16 @@
       </div>
     </div>
 
-    <div class="feed-list">
+    <div v-if="feeds.length === 0" class="empty-feeds">
+      <div class="empty-title">还没有订阅源</div>
+      <div class="empty-desc">添加 RSS 订阅源，或从其他阅读器导入 OPML 文件。</div>
+      <button class="btn btn-primary" @click="$emit('add-feed')">
+        <Plus :size="15" />
+        <span>添加订阅源</span>
+      </button>
+    </div>
+
+    <div v-else class="feed-list">
       <div
         v-for="feed in feeds"
         :key="feed.id"
@@ -35,23 +58,38 @@
           <span v-if="feed.unreadCount > 0" class="feed-unread">{{ feed.unreadCount }}</span>
         </div>
         <div class="feed-url">{{ feed.url }}</div>
+        <button class="feed-edit-btn" title="编辑订阅" @click.stop="$emit('edit-feed', feed.id)">
+          <Settings :size="14" />
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Download, FolderInput, Plus, RefreshCw, Settings } from 'lucide-vue-next'
+
 defineProps<{
-  feeds: Array<{ id: string; title: string; url: string; unreadCount: number }>
+  feeds: Array<{
+    id: string
+    title: string
+    url: string
+    unreadCount: number
+    refreshIntervalMinutes?: number
+  }>
   selectedFeedId: string
   tags: Array<{ id: string; name: string; count: number }>
   selectedTag: string
+  isRefreshing: boolean
 }>()
 
 defineEmits<{
   'select-feed': [feedId: string]
   'select-tag': [tagName: string]
   'add-feed': []
+  'edit-feed': [feedId: string]
+  'import-opml': []
+  'export-opml': []
   'refresh': []
 }>()
 </script>
@@ -72,11 +110,13 @@ defineEmits<{
 
 .sidebar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .btn {
   flex: 1;
+  min-width: 108px;
   padding: 8px 12px;
   border: 1px solid #dcdfe6;
   background: #ffffff;
@@ -84,6 +124,11 @@ defineEmits<{
   cursor: pointer;
   font-size: 13px;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .btn:hover {
@@ -100,6 +145,15 @@ defineEmits<{
 
 .btn-primary:hover {
   background: #66b1ff;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.spinning {
+  animation: spin 0.9s linear infinite;
 }
 
 .sidebar-filters {
@@ -144,7 +198,31 @@ defineEmits<{
   padding: 8px;
 }
 
+.empty-feeds {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.empty-title {
+  color: #303133;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.empty-desc {
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .feed-item {
+  position: relative;
   padding: 12px;
   border-radius: 6px;
   cursor: pointer;
@@ -183,5 +261,38 @@ defineEmits<{
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-right: 28px;
+}
+
+.feed-edit-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 24px;
+  height: 24px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #909399;
+  cursor: pointer;
+}
+
+.feed-item:hover .feed-edit-btn,
+.feed-item.active .feed-edit-btn {
+  display: inline-flex;
+}
+
+.feed-edit-btn:hover {
+  background: #ffffff;
+  color: #409eff;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

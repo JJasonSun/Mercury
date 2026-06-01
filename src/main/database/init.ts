@@ -9,21 +9,32 @@ import { app } from 'electron'
 
 export function initDatabase(): Database.Database {
   const dbPath = path.join(app.getPath('userData'), 'mercury.db')
+  return initDatabaseAtPath(dbPath)
+}
+
+export function initDatabaseAtPath(dbPath: string): Database.Database {
   const db = new Database(dbPath)
+  db.pragma('foreign_keys = ON')
 
   // 创建 feeds 表
   db.exec(`
     CREATE TABLE IF NOT EXISTS feeds (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
+      feed_title TEXT,
+      custom_title TEXT,
       url TEXT NOT NULL UNIQUE,
       description TEXT,
       site_url TEXT,
       favicon_url TEXT,
+      refresh_interval_minutes INTEGER NOT NULL DEFAULT 0,
+      last_refreshed_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
   `)
+
+  migrateFeedsTable(db)
 
   // 创建 entries 表
   db.exec(`
@@ -49,7 +60,7 @@ export function initDatabase(): Database.Database {
       raw_html TEXT,
       cleaned_html TEXT,
       cleaned_markdown TEXT,
-    fetched_at INTEGER,
+      fetched_at INTEGER,
       FOREIGN KEY (entry_id) REFERENCES entries(id) ON DELETE CASCADE
     )
   `)
@@ -79,11 +90,11 @@ export function initDatabase(): Database.Database {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_runs (
       id TEXT PRIMARY KEY,
-    entry_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
       agent_type TEXT NOT NULL,
       input_text TEXT,
       output_text TEXT,
-    status TEXT NOT NULL,
+      status TEXT NOT NULL,
       error_message TEXT,
       started_at INTEGER NOT NULL,
       completed_at INTEGER,
@@ -95,7 +106,7 @@ export function initDatabase(): Database.Database {
   db.exec(`
     CREATE TABLE IF NOT EXISTS llm_usage (
       id TEXT PRIMARY KEY,
-   agent_run_id TEXT NOT NULL,
+      agent_run_id TEXT NOT NULL,
       model TEXT NOT NULL,
       prompt_tokens INTEGER,
       completion_tokens INTEGER,
@@ -125,4 +136,43 @@ export function initDatabase(): Database.Database {
   `)
 
   return db
+}
+
+function migrateFeedsTable(db: Database.Database): void {
+  const addedFeedTitle = ensureColumn(db, 'feed_title', 'TEXT')
+  const addedCustomTitle = ensureColumn(db, 'custom_title', 'TEXT')
+  ensureColumn(db, 'refresh_interval_minutes', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(db, 'last_refreshed_at', 'INTEGER')
+
+  db.exec(`
+    UPDATE feeds
+    SET feed_title = title
+    WHERE feed_title IS NULL OR TRIM(feed_title) = '';
+
+    UPDATE feeds
+    SET refresh_interval_minutes = 0
+    WHERE refresh_interval_minutes IS NULL OR refresh_interval_minutes < 0;
+
+    UPDATE feeds
+    SET last_refreshed_at = updated_at
+    WHERE last_refreshed_at IS NULL;
+  `)
+
+  if (addedFeedTitle && addedCustomTitle) {
+    db.exec(`
+      UPDATE feeds
+      SET custom_title = title
+      WHERE custom_title IS NULL OR TRIM(custom_title) = '';
+    `)
+  }
+}
+
+function ensureColumn(db: Database.Database, columnName: string, definition: string): boolean {
+  const columns = db.prepare('PRAGMA table_info(feeds)').all() as Array<{ name: string }>
+  const exists = columns.some((column) => column.name === columnName)
+  if (!exists) {
+    db.exec(`ALTER TABLE feeds ADD COLUMN ${columnName} ${definition}`)
+    return true
+  }
+  return false
 }

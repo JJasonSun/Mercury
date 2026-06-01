@@ -1,8 +1,28 @@
 export interface Feed {
   id: string
   title: string
+  sourceTitle?: string
+  customTitle?: string | null
   url: string
   unreadCount: number
+  refreshIntervalMinutes?: number
+  lastRefreshedAt?: string
+}
+
+export interface OpmlFeed {
+  title: string
+  url: string
+}
+
+export interface OpmlImportFailure {
+  title: string
+  url: string
+  error: string
+}
+
+export interface OpmlImportResult {
+  feeds: Feed[]
+  failures: OpmlImportFailure[]
 }
 
 export interface Article {

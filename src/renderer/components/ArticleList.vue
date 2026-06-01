@@ -3,13 +3,42 @@
     <div class="list-header">
     <div class="list-title">文章列表</div>
       <div class="list-controls">
-        <button class="control-btn active">全部</button>
-        <button class="control-btn">未读</button>
-        <button class="control-btn">已读</button>
+        <button
+          class="control-btn"
+          :class="{ active: filter === 'all' }"
+          @click="$emit('change-filter', 'all')"
+        >
+          全部
+        </button>
+        <button
+          class="control-btn"
+          :class="{ active: filter === 'unread' }"
+          @click="$emit('change-filter', 'unread')"
+        >
+          未读
+        </button>
+        <button
+          class="control-btn"
+          :class="{ active: filter === 'read' }"
+          @click="$emit('change-filter', 'read')"
+        >
+          已读
+        </button>
       </div>
     </div>
 
-    <div class="articles">
+    <div v-if="isLoading" class="article-state">
+      <LoaderCircle class="spinning" :size="28" />
+      <div>文章列表加载中...</div>
+    </div>
+
+    <div v-else-if="articles.length === 0" class="article-state">
+      <Inbox :size="36" />
+      <div class="state-title">暂无文章</div>
+      <div class="state-desc">该订阅源还没有文章，点击刷新按钮获取最新内容。</div>
+    </div>
+
+    <div v-else class="articles">
       <div
         v-for="article in articles"
         :key="article.id"
@@ -32,6 +61,10 @@
 </template>
 
 <script setup lang="ts">
+import { Inbox, LoaderCircle } from 'lucide-vue-next'
+
+export type ArticleFilter = 'all' | 'unread' | 'read'
+
 defineProps<{
   articles: Array<{
     id: string
@@ -44,10 +77,13 @@ defineProps<{
     tags: string[]
   }>
   selectedArticleId: string
+  filter: ArticleFilter
+  isLoading: boolean
 }>()
 
 defineEmits<{
   'select-article': [articleId: string]
+  'change-filter': [filter: ArticleFilter]
 }>()
 </script>
 
@@ -100,6 +136,30 @@ defineEmits<{
 .articles {
   flex: 1;
   overflow-y: auto;
+}
+
+.article-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #909399;
+  text-align: center;
+}
+
+.state-title {
+  color: #303133;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.state-desc {
+  max-width: 260px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .article-item {
@@ -174,5 +234,15 @@ defineEmits<{
   color: #409eff;
   border-radius: 10px;
   font-size: 11px;
+}
+
+.spinning {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

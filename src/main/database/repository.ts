@@ -1,0 +1,429 @@
+import type Database from 'better-sqlite3'
+import { Article, ArticleContent, Feed, Tag } from '../types'
+
+export interface FeedRecord {
+  id: string
+  title: string
+  feedTitle?: string | null
+  customTitle?: string | null
+  url: string
+  description?: string | null
+  siteUrl?: string | null
+  faviconUrl?: string | null
+  refreshIntervalMinutes?: number
+  lastRefreshedAt?: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface EntryRecord {
+  id: string
+  feedId: string
+  title: string
+  url: string
+  author?: string | null
+  publishedAt?: number | null
+  guid?: string | null
+  excerpt?: string | null
+  isRead?: boolean
+  createdAt: number
+}
+
+export interface EntryContentRecord {
+  entryId: string
+  rawHtml?: string | null
+  cleanedHtml?: string | null
+  cleanedMarkdown?: string | null
+  fetchedAt?: number | null
+}
+
+interface FeedRow {
+  id: string
+  title: string
+  feed_title: string | null
+  custom_title: string | null
+  url: string
+  description: string | null
+  site_url: string | null
+  favicon_url: string | null
+  refresh_interval_minutes: number | null
+  last_refreshed_at: number | null
+  created_at: number
+  updated_at: number
+  unread_count?: number
+}
+
+interface EntryRow {
+  id: string
+  feed_id: string
+  title: string
+  url: string
+  author: string | null
+  published_at: number | null
+  guid: string | null
+  excerpt: string | null
+  is_read: number
+  created_at: number
+}
+
+interface EntryContentRow {
+  entry_id: string
+  raw_html: string | null
+  cleaned_html: string | null
+  cleaned_markdown: string | null
+  fetched_at: number | null
+  title: string
+  author: string | null
+  published_at: number | null
+  url: string
+}
+
+interface TagRow {
+  id: string
+  name: string
+  count: number
+}
+
+export class Repository {
+  constructor(private readonly db: Database.Database) {}
+
+  createFeed(feed: FeedRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO feeds (
+          id, title, feed_title, custom_title, url, description, site_url, favicon_url,
+          refresh_interval_minutes, last_refreshed_at, created_at, updated_at
+        ) VALUES (
+          @id, @title, @feedTitle, @customTitle, @url, @description, @siteUrl, @faviconUrl,
+          @refreshIntervalMinutes, @lastRefreshedAt, @createdAt, @updatedAt
+        )`
+      )
+      .run({
+        ...feed,
+        feedTitle: feed.feedTitle ?? feed.title,
+        customTitle: feed.customTitle ?? null,
+        refreshIntervalMinutes: feed.refreshIntervalMinutes ?? 0,
+        lastRefreshedAt: feed.lastRefreshedAt ?? feed.updatedAt
+      })
+  }
+
+  updateFeed(feedId: string, fields: Partial<Omit<FeedRecord, 'id' | 'createdAt'>>): void {
+    const current = this.getFeedRowById(feedId)
+    if (!current) {
+      throw new Error(`Feed not found: ${feedId}`)
+    }
+
+    this.db
+      .prepare(
+        `UPDATE feeds
+         SET title = @title,
+             feed_title = @feedTitle,
+             custom_title = @customTitle,
+             url = @url,
+             description = @description,
+             site_url = @siteUrl,
+             favicon_url = @faviconUrl,
+             refresh_interval_minutes = @refreshIntervalMinutes,
+             last_refreshed_at = @lastRefreshedAt,
+             updated_at = @updatedAt
+         WHERE id = @id`
+      )
+      .run({
+        id: feedId,
+        title: this.resolveStoredTitle({
+          title: fields.title ?? current.title,
+          feedTitle: fields.feedTitle ?? current.feed_title,
+          customTitle: fields.customTitle !== undefined ? fields.customTitle : current.custom_title
+        }),
+        feedTitle: fields.feedTitle ?? current.feed_title ?? current.title,
+        customTitle: fields.customTitle !== undefined ? normalizeNullableTitle(fields.customTitle) : current.custom_title,
+        url: fields.url ?? current.url,
+        description: fields.description ?? current.description,
+        siteUrl: fields.siteUrl ?? current.site_url,
+        faviconUrl: fields.faviconUrl ?? current.favicon_url,
+        refreshIntervalMinutes: fields.refreshIntervalMinutes ?? current.refresh_interval_minutes ?? 0,
+        lastRefreshedAt: fields.lastRefreshedAt ?? current.last_refreshed_at,
+        updatedAt: fields.updatedAt ?? Date.now()
+      })
+  }
+
+  deleteFeed(feedId: string): void {
+    this.db.prepare('DELETE FROM feeds WHERE id = ?').run(feedId)
+  }
+
+  getFeedRowById(feedId: string): FeedRow | undefined {
+    return this.db.prepare('SELECT * FROM feeds WHERE id = ?').get(feedId) as FeedRow | undefined
+  }
+
+  getFeedRowByUrl(url: string): FeedRow | undefined {
+    return this.db.prepare('SELECT * FROM feeds WHERE url = ?').get(url) as FeedRow | undefined
+  }
+
+  getAllFeedRows(): FeedRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM feeds
+         ORDER BY COALESCE(NULLIF(custom_title, ''), NULLIF(feed_title, ''), title) COLLATE NOCASE`
+      )
+      .all() as FeedRow[]
+  }
+
+  getAllFeeds(): Feed[] {
+    const rows = this.db
+      .prepare(
+        `SELECT feeds.*,
+                COALESCE(SUM(CASE WHEN entries.is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
+         FROM feeds
+         LEFT JOIN entries ON entries.feed_id = feeds.id
+         GROUP BY feeds.id
+         ORDER BY COALESCE(NULLIF(feeds.custom_title, ''), NULLIF(feeds.feed_title, ''), feeds.title) COLLATE NOCASE`
+      )
+      .all() as FeedRow[]
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      title: this.getDisplayTitle(row),
+      sourceTitle: this.getSourceTitle(row),
+      customTitle: this.getCustomTitle(row),
+      url: String(row.url),
+      unreadCount: Number(row.unread_count ?? 0),
+      refreshIntervalMinutes: Number(row.refresh_interval_minutes ?? 0),
+      lastRefreshedAt: this.formatDate(row.last_refreshed_at)
+    }))
+  }
+
+  upsertEntry(entry: EntryRecord): { id: string; inserted: boolean } {
+    const existing = this.findExistingEntry(entry)
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE entries
+           SET feed_id = @feedId,
+               title = @title,
+               url = @url,
+               author = @author,
+               published_at = @publishedAt,
+               guid = @guid,
+               excerpt = @excerpt
+           WHERE id = @id`
+        )
+        .run({
+          ...entry,
+          id: existing.id
+        })
+      return { id: existing.id, inserted: false }
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO entries (
+          id, feed_id, title, url, author, published_at, guid, excerpt, is_read, created_at
+        ) VALUES (
+          @id, @feedId, @title, @url, @author, @publishedAt, @guid, @excerpt, @isRead, @createdAt
+        )`
+      )
+      .run({
+        ...entry,
+        isRead: entry.isRead ? 1 : 0
+      })
+
+    return { id: entry.id, inserted: true }
+  }
+
+  getArticlesByFeed(feedId: string): Article[] {
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM entries
+         WHERE feed_id = ?
+         ORDER BY COALESCE(published_at, created_at) DESC`
+      )
+      .all(feedId) as EntryRow[]
+
+    return rows.map((row) => this.toArticle(row))
+  }
+
+  getAllArticles(): Article[] {
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM entries
+         ORDER BY COALESCE(published_at, created_at) DESC`
+      )
+      .all() as EntryRow[]
+
+    return rows.map((row) => this.toArticle(row))
+  }
+
+  getUnreadArticles(): Article[] {
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM entries
+         WHERE is_read = 0
+         ORDER BY COALESCE(published_at, created_at) DESC`
+      )
+      .all() as EntryRow[]
+
+    return rows.map((row) => this.toArticle(row))
+  }
+
+  getEntryRowById(entryId: string): EntryRow | undefined {
+    return this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entryId) as EntryRow | undefined
+  }
+
+  getArticleContent(entryId: string): ArticleContent | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT entry_contents.entry_id,
+                entry_contents.raw_html,
+                entry_contents.cleaned_html,
+                entry_contents.cleaned_markdown,
+                entry_contents.fetched_at,
+                entries.title,
+                entries.author,
+                entries.published_at,
+                entries.url
+         FROM entries
+         LEFT JOIN entry_contents ON entry_contents.entry_id = entries.id
+         WHERE entries.id = ?`
+      )
+      .get(entryId) as EntryContentRow | undefined
+
+    if (!row) {
+      return undefined
+    }
+
+    return {
+      id: String(row.entry_id ?? entryId),
+      title: String(row.title),
+      author: row.author ?? undefined,
+      publishedAt: this.formatDate(row.published_at),
+      sourceUrl: String(row.url),
+      rawHtml: row.raw_html ?? undefined,
+      cleanedHtml: row.cleaned_html ?? undefined,
+      cleanedMarkdown: row.cleaned_markdown ?? undefined,
+      summary: '',
+      translation: '',
+      tags: this.getArticleTags(entryId).map((tag) => tag.name)
+    }
+  }
+
+  upsertEntryContent(content: EntryContentRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO entry_contents (
+          entry_id, raw_html, cleaned_html, cleaned_markdown, fetched_at
+        ) VALUES (
+          @entryId, @rawHtml, @cleanedHtml, @cleanedMarkdown, @fetchedAt
+        )
+        ON CONFLICT(entry_id) DO UPDATE SET
+          raw_html = COALESCE(excluded.raw_html, entry_contents.raw_html),
+          cleaned_html = COALESCE(excluded.cleaned_html, entry_contents.cleaned_html),
+          cleaned_markdown = COALESCE(excluded.cleaned_markdown, entry_contents.cleaned_markdown),
+          fetched_at = COALESCE(excluded.fetched_at, entry_contents.fetched_at)`
+      )
+      .run(content)
+  }
+
+  markAsRead(entryId: string): void {
+    this.setReadState(entryId, true)
+  }
+
+  markAsUnread(entryId: string): void {
+    this.setReadState(entryId, false)
+  }
+
+  getArticleTags(entryId: string): Tag[] {
+    const rows = this.db
+      .prepare(
+        `SELECT tags.id, tags.name, COUNT(entry_tags.entry_id) AS count
+         FROM tags
+         INNER JOIN entry_tags ON entry_tags.tag_id = tags.id
+         WHERE entry_tags.entry_id = ?
+         GROUP BY tags.id
+         ORDER BY tags.name COLLATE NOCASE`
+      )
+      .all(entryId) as TagRow[]
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      count: Number(row.count)
+    }))
+  }
+
+  private findExistingEntry(entry: EntryRecord): EntryRow | undefined {
+    const byUrl = this.db.prepare('SELECT * FROM entries WHERE url = ?').get(entry.url) as
+      | EntryRow
+      | undefined
+
+    if (byUrl) {
+      return byUrl
+    }
+
+    if (!entry.guid) {
+      return undefined
+    }
+
+    return this.db
+      .prepare('SELECT * FROM entries WHERE feed_id = ? AND guid = ?')
+      .get(entry.feedId, entry.guid) as EntryRow | undefined
+  }
+
+  private setReadState(entryId: string, isRead: boolean): void {
+    this.db.prepare('UPDATE entries SET is_read = ? WHERE id = ?').run(isRead ? 1 : 0, entryId)
+  }
+
+  private toArticle(row: EntryRow): Article {
+    return {
+      id: String(row.id),
+      feedId: String(row.feed_id),
+      title: String(row.title),
+      author: row.author ?? undefined,
+      publishedAt: this.formatDate(row.published_at),
+      excerpt: row.excerpt ? String(row.excerpt) : '',
+      isRead: row.is_read === 1,
+      tags: this.getArticleTags(row.id).map((tag) => tag.name)
+    }
+  }
+
+  private resolveStoredTitle(fields: { title: string; feedTitle?: string | null; customTitle?: string | null }): string {
+    return normalizeNullableTitle(fields.customTitle) || normalizeNullableTitle(fields.feedTitle) || fields.title
+  }
+
+  private getDisplayTitle(row: FeedRow): string {
+    return this.getCustomTitle(row) || this.getSourceTitle(row)
+  }
+
+  private getSourceTitle(row: FeedRow): string {
+    return row.feed_title?.trim() || row.title
+  }
+
+  private getCustomTitle(row: FeedRow): string | null {
+    const customTitle = row.custom_title?.trim()
+    if (!customTitle || customTitle === this.getSourceTitle(row)) {
+      return null
+    }
+
+    return customTitle
+  }
+
+  private formatDate(timestamp?: number | null): string {
+    if (!timestamp) {
+      return ''
+    }
+
+    return new Date(timestamp).toISOString()
+  }
+}
+
+function normalizeNullableTitle(value?: string | null): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}

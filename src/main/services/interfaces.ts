@@ -1,4 +1,4 @@
-import { Feed, Article, ArticleContent, Tag, LLMConfig } from '../types'
+import { Feed, Article, ArticleContent, Tag, LLMConfig, OpmlFeed, OpmlImportResult } from '../types'
 
 /**
  * Feed 服务接口
@@ -11,6 +11,15 @@ export interface IFeedService {
   // 删除订阅源
   deleteFeed(feedId: string): Promise<void>
 
+  // 更新订阅源
+  updateFeed(
+    feedId: string,
+    updates: { title?: string; url?: string; refreshIntervalMinutes?: number }
+  ): Promise<Feed>
+
+  // 恢复订阅源原始名称
+  resetFeedTitle(feedId: string): Promise<Feed>
+
   // 获取所有订阅源
   getAllFeeds(): Promise<Feed[]>
 
@@ -20,8 +29,17 @@ export interface IFeedService {
   // 刷新所有订阅源
   refreshAllFeeds(): Promise<void>
 
+  // 刷新达到自动刷新时间的订阅源
+  refreshDueFeeds(now?: number): Promise<void>
+
   // 导入 OPML
-  importOpml(filePath: string): Promise<Feed[]>
+  importOpml(filePath: string): Promise<OpmlImportResult>
+
+  // 预览 OPML
+  previewOpml(filePath: string): Promise<OpmlFeed[]>
+
+  // 导入选中的 OPML Feed
+  importOpmlFeeds(feeds: OpmlFeed[]): Promise<OpmlImportResult>
 
   // 导出 OPML
   exportOpml(filePath: string): Promise<void>
@@ -35,6 +53,9 @@ export interface IArticleService {
   // 获取指定订阅源的文章列表
   getArticlesByFeed(feedId: string): Promise<Article[]>
 
+  // 兼容模块协作文档中的命名
+  getEntries(feedId: string): Promise<Article[]>
+
   // 获取所有文章
   getAllArticles(): Promise<Article[]>
 
@@ -43,6 +64,9 @@ export interface IArticleService {
 
   // 获取文章详细内容
   getArticleContent(articleId: string): Promise<ArticleContent>
+
+  // 兼容模块协作文档中的命名
+  getEntryContent(articleId: string): Promise<ArticleContent>
   // 标记文章为已读
   markAsRead(articleId: string): Promise<void>
 
