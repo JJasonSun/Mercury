@@ -54,7 +54,9 @@
           <AlertTriangle :size="16" />
           <span>危险操作</span>
         </div>
-        <div class="danger-desc">删除订阅源将同时删除该源下的所有文章数据，此操作不可恢复。</div>
+        <div class="danger-desc">
+          删除订阅源将同时删除该源下 {{ feed.articleCount ?? 0 }} 篇文章数据，此操作不可恢复。
+        </div>
         <button class="btn btn-danger" type="button" :disabled="isLoading" @click="$emit('delete')">
           删除订阅源
         </button>

@@ -19,6 +19,12 @@
         <span>导出 OPML</span>
       </button>
       </div>
+      <div v-if="selectedFeed" class="refresh-meta">
+        <span>上次刷新：{{ formatLastRefresh(selectedFeed.lastRefreshedAt) }}</span>
+        <span v-if="selectedFeed.lastError" class="refresh-error" :title="selectedFeed.lastError">
+          刷新失败：{{ selectedFeed.lastError }}
+        </span>
+      </div>
     </div>
 
     <div class="sidebar-filters">
@@ -58,6 +64,7 @@
           <span v-if="feed.unreadCount > 0" class="feed-unread">{{ feed.unreadCount }}</span>
         </div>
         <div class="feed-url">{{ feed.url }}</div>
+        <div v-if="feed.lastError" class="feed-error" :title="feed.lastError">刷新失败</div>
         <button class="feed-edit-btn" title="编辑订阅" @click.stop="$emit('edit-feed', feed.id)">
           <Settings :size="14" />
         </button>
@@ -67,15 +74,19 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Download, FolderInput, Plus, RefreshCw, Settings } from 'lucide-vue-next'
 
-defineProps<{
+const props = defineProps<{
   feeds: Array<{
     id: string
     title: string
     url: string
     unreadCount: number
+    articleCount?: number
     refreshIntervalMinutes?: number
+    lastRefreshedAt?: string
+    lastError?: string | null
   }>
   selectedFeedId: string
   tags: Array<{ id: string; name: string; count: number }>
@@ -92,6 +103,21 @@ defineEmits<{
   'export-opml': []
   'refresh': []
 }>()
+
+const selectedFeed = computed(() => props.feeds.find((feed) => feed.id === props.selectedFeedId))
+
+const formatLastRefresh = (value?: string) => {
+  if (!value) {
+    return '尚未刷新'
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+
+  return date.toLocaleString()
+}
 </script>
 
 <style scoped>
@@ -112,6 +138,23 @@ defineEmits<{
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.refresh-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.refresh-error {
+  color: #c45656;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn {
@@ -262,6 +305,16 @@ defineEmits<{
   text-overflow: ellipsis;
   white-space: nowrap;
   padding-right: 28px;
+}
+
+.feed-error {
+  display: inline-flex;
+  margin-top: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fef0f0;
+  color: #c45656;
+  font-size: 11px;
 }
 
 .feed-edit-btn {

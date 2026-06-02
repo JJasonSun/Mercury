@@ -29,6 +29,7 @@ export function initDatabaseAtPath(dbPath: string): Database.Database {
       favicon_url TEXT,
       refresh_interval_minutes INTEGER NOT NULL DEFAULT 0,
       last_refreshed_at INTEGER,
+      last_error TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
@@ -143,6 +144,7 @@ function migrateFeedsTable(db: Database.Database): void {
   const addedCustomTitle = ensureColumn(db, 'custom_title', 'TEXT')
   ensureColumn(db, 'refresh_interval_minutes', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'last_refreshed_at', 'INTEGER')
+  ensureColumn(db, 'last_error', 'TEXT')
 
   db.exec(`
     UPDATE feeds

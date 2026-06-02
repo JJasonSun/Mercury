@@ -29,6 +29,7 @@
         @summarize="handleSummarize"
         @translate="handleTranslate"
         @add-tag="handleAddTag"
+        @mark-unread="handleMarkUnread"
         @export="handleExport"
       />
     </div>
@@ -340,6 +341,7 @@ const handleRefresh = async () => {
     selectedArticleContent.value = null
   } catch (error) {
     console.error('Failed to refresh feed', error)
+    feeds.value = await window.electronAPI.getFeedList()
     alert(`刷新失败：${error instanceof Error ? error.message : String(error)}`)
   } finally {
     isRefreshing.value = false
@@ -415,7 +417,10 @@ const deleteEditingFeed = async () => {
     return
   }
 
-  const shouldDelete = confirm(`确定删除“${editingFeed.value.title}”吗？该源下文章也会被删除。`)
+  const articleCount = editingFeed.value.articleCount ?? 0
+  const shouldDelete = confirm(
+    `确定删除“${editingFeed.value.title}”吗？该源下 ${articleCount} 篇文章也会被删除。`
+  )
   if (!shouldDelete) {
     return
   }
@@ -636,6 +641,24 @@ const handleTranslate = () => {
 
 const handleAddTag = () => {
   alert('添加标签功能（占位）')
+}
+
+const handleMarkUnread = async () => {
+  if (!window.electronAPI || !selectedArticleId.value) {
+    alert('当前环境不支持标记未读')
+    return
+  }
+
+  try {
+    await window.electronAPI.markArticleUnread(selectedArticleId.value)
+    articleList.value = articleList.value.map((article) =>
+      article.id === selectedArticleId.value ? { ...article, isRead: false } : article
+    )
+    feeds.value = await window.electronAPI.getFeedList()
+  } catch (error) {
+    console.error('Failed to mark article unread', error)
+    alert(`标记未读失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const handleExport = () => {

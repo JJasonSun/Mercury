@@ -42,11 +42,15 @@
         </div>
 
         <div class="feed-preview-list">
-          <label v-for="feed in feeds" :key="feed.url" class="feed-preview-item">
-            <input v-model="selectedUrls" type="checkbox" :value="feed.url" />
+          <label v-for="(feed, index) in feeds" :key="`${feed.url}-${index}`" class="feed-preview-item">
+            <input v-model="selectedUrls" type="checkbox" :value="feed.url" :disabled="!isSelectable(feed)" />
             <span>
-              <strong>{{ feed.title || feed.url }}</strong>
+              <strong>
+                {{ feed.title || feed.url }}
+                <em class="status-badge" :class="statusClass(feed)">{{ statusLabelForFeed(feed) }}</em>
+              </strong>
               <small>{{ feed.url }}</small>
+              <small v-if="feed.message" class="feed-message">{{ feed.message }}</small>
             </span>
           </label>
         </div>
@@ -120,7 +124,10 @@ const emit = defineEmits<{
 const selectedUrls = ref<string[]>([])
 const isDragging = ref(false)
 
-const isAllSelected = computed(() => props.feeds.length > 0 && selectedUrls.value.length === props.feeds.length)
+const selectableFeeds = computed(() => props.feeds.filter((feed) => isSelectable(feed)))
+const isAllSelected = computed(
+  () => selectableFeeds.value.length > 0 && selectedUrls.value.length === selectableFeeds.value.length
+)
 const finishedCount = computed(
   () => props.progress.filter((item) => item.status === 'success' || item.status === 'failed').length
 )
@@ -131,12 +138,12 @@ const progressPercent = computed(() =>
 watch(
   () => props.feeds,
   (feeds) => {
-    selectedUrls.value = feeds.map((feed) => feed.url)
+    selectedUrls.value = feeds.filter((feed) => isSelectable(feed)).map((feed) => feed.url)
   }
 )
 
 const toggleAll = () => {
-  selectedUrls.value = isAllSelected.value ? [] : props.feeds.map((feed) => feed.url)
+  selectedUrls.value = isAllSelected.value ? [] : selectableFeeds.value.map((feed) => feed.url)
 }
 
 const submit = () => {
@@ -144,7 +151,7 @@ const submit = () => {
   emit(
     'import',
     props.feeds
-      .filter((feed) => selected.has(feed.url))
+      .filter((feed) => selected.has(feed.url) && isSelectable(feed))
       .map((feed) => ({
         title: String(feed.title || feed.url),
         url: String(feed.url)
@@ -178,6 +185,28 @@ const statusLabel = (status: OpmlImportProgressItem['status']) => {
   }
   return '导入失败'
 }
+
+const isSelectable = (feed: OpmlFeed) => feed.status !== 'invalid' && feed.status !== 'duplicate'
+
+const statusLabelForFeed = (feed: OpmlFeed) => {
+  if (feed.status === 'existing') {
+    return '已存在'
+  }
+  if (feed.status === 'duplicate') {
+    return '重复'
+  }
+  if (feed.status === 'invalid') {
+    return '无效 URL'
+  }
+  return '新增'
+}
+
+const statusClass = (feed: OpmlFeed) => ({
+  existing: feed.status === 'existing',
+  duplicate: feed.status === 'duplicate',
+  invalid: feed.status === 'invalid',
+  fresh: !feed.status || feed.status === 'new'
+})
 </script>
 
 <style scoped>
@@ -345,6 +374,9 @@ const statusLabel = (status: OpmlImportProgressItem['status']) => {
 }
 
 .feed-preview-item strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: #303133;
   font-size: 13px;
 }
@@ -354,6 +386,36 @@ const statusLabel = (status: OpmlImportProgressItem['status']) => {
   color: #909399;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.feed-preview-item input:disabled + span {
+  opacity: 0.62;
+}
+
+.status-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  background: #ecf5ff;
+  color: #409eff;
+}
+
+.status-badge.existing {
+  background: #f4f4f5;
+  color: #606266;
+}
+
+.status-badge.duplicate,
+.status-badge.invalid {
+  background: #fef0f0;
+  color: #c45656;
+}
+
+.feed-message {
+  color: #c45656;
 }
 
 .import-progress {

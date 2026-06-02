@@ -129,12 +129,14 @@ custom_title -> feed_title -> title
 
 - `refresh_interval_minutes`：自动刷新频率，单位分钟，`0` 表示手动刷新。
 - `last_refreshed_at`：最近一次刷新时间。
+- `last_error`：最近一次刷新失败原因，刷新成功后清空。
 
 启动时会自动迁移旧数据库：
 
 - `feed_title` 为空时用旧 `title` 初始化。
 - `refresh_interval_minutes` 默认设为 `0`。
 - `last_refreshed_at` 默认设为旧 `updated_at`。
+- `last_error` 默认设为空。
 
 ## 4. Feed 与文章功能
 
@@ -153,8 +155,14 @@ custom_title -> feed_title -> title
 
 去重策略：
 
-- 优先按文章 URL 查重。
+- 优先按规范化后的文章 URL 查重。
 - 如果存在 GUID，则按同一 Feed 下的 GUID 查重。
+- 如果 GUID 为空，则使用“标题 + 发布时间 + 规范化链接”作为弱去重依据。
+
+文章 URL 规范化规则：
+
+- 去掉尾部 `/`。
+- 去掉常见 tracking 参数，例如 `utm_*`、`fbclid`、`gclid`、`mc_cid`、`mc_eid` 等。
 
 重复刷新同一订阅源时，不会重复插入已有文章。
 
@@ -222,7 +230,18 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 3. 判断当前时间距离 `last_refreshed_at` 是否达到刷新频率。
 4. 到期后调用 `refreshFeed()`。
 
-如果某个订阅源刷新失败，不会影响其他源。失败源会记录本次检查时间，避免失效源每分钟重复阻塞。
+如果某个订阅源刷新失败，不会影响其他源。失败源会记录本次检查时间和失败原因，避免失效源每分钟重复阻塞，并让 UI 可以展示错误信息。
+
+刷新成功后：
+
+- 更新 `last_refreshed_at`。
+- 清空 `last_error`。
+
+刷新失败后：
+
+- 更新 `last_refreshed_at`。
+- 写入 `last_error`。
+- 单个 Feed 的失败不会阻断 `refreshAllFeeds()` 中其他 Feed 的刷新。
 
 ## 7. 前端 UI 实现
 
@@ -253,6 +272,7 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 - 一键恢复源站原始名称。
 - 设置刷新频率。
 - 删除订阅源。
+- 删除前展示该订阅源下的文章数量。
 - 未保存修改时关闭前确认。
 
 ### 7.3 OPML 导入对话框
@@ -269,6 +289,12 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 - 全选/单选。
 - 显示逐项导入进度。
 - 显示部分失败原因。
+- 预览阶段标记订阅源状态：
+  - `新增`
+  - `已存在`
+  - `重复`
+  - `无效 URL`
+- 重复和无效 URL 默认不可选，避免误导入。
 
 ### 7.4 Feed Sidebar
 
@@ -283,6 +309,8 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 - 导入 OPML。
 - 导出 OPML。
 - 展示 Feed 标题、URL、未读数。
+- 展示选中 Feed 的上次刷新时间。
+- 刷新失败时展示失败提示和错误原因。
 - Feed hover 或选中时显示编辑按钮。
 - 无订阅源时显示空状态。
 
@@ -299,7 +327,34 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 - 空状态。
 - 未读视觉提示。
 
-## 8. 已完成的 A 模块功能清单
+### 7.6 Reader View
+
+修改文件：
+
+- `src/renderer/components/ReaderView.vue`
+
+能力：
+
+- 打开文章时自动标记已读。
+- 新增“标记未读”按钮，调用已有 `markArticleUnread` IPC。
+- 标记未读后刷新文章列表状态和 Feed 未读数。
+
+## 8. 本轮优化内容
+
+本轮围绕 A 模块可验收性和真实使用稳定性做了以下优化：
+
+| 优化项 | 实现说明 |
+|---|---|
+| 刷新错误隔离 | `refreshAllFeeds()` 对每个 Feed 单独捕获错误，某个 Feed 失败不会影响其他 Feed。 |
+| 刷新失败记录 | `feeds.last_error` 持久化失败原因，成功刷新后清空。 |
+| 刷新状态展示 | Feed Sidebar 显示选中 Feed 的上次刷新时间和刷新失败原因。 |
+| 去重规则增强 | 文章 URL 去尾部 `/`、清理 tracking 参数；GUID 为空时使用弱去重。 |
+| OPML 预览状态 | 导入前显示新增、已存在、重复、无效 URL，并禁用重复/无效项。 |
+| 删除前数量提示 | 删除订阅源前展示会删除的文章数量。 |
+| 标记未读 UI | Reader View 增加“标记未读”按钮，并更新未读数量。 |
+| 固定手测夹具 | 新增 `test/` 目录，提供本地 RSS 服务、OPML 文件和手动测试说明。 |
+
+## 9. 已完成的 A 模块功能清单
 
 - RSS/Atom Feed 解析。
 - Feed 添加、编辑、删除。
@@ -310,19 +365,23 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 - 恢复源站原始名称。
 - 文章入库与去重。
 - Feed 未读数量计算。
+- Feed 上次刷新时间展示。
+- Feed 刷新失败原因记录和展示。
 - 文章全部/未读/已读筛选。
 - 文章已读/未读状态管理。
 - 文章 raw HTML 懒抓取和存储。
+- 增强文章去重规则。
 - OPML 点击选择导入。
 - OPML 拖拽上传。
 - OPML 预览、全选、单选。
+- OPML 新增/已存在/重复/无效 URL 预览状态。
 - OPML 逐项导入进度。
 - OPML 部分成功/失败汇总。
 - OPML 导出。
 - A 模块 IPC handlers 和 preload API。
 - Electron 环境真实数据接入，浏览器环境保留 mock fallback。
 
-## 9. 不属于 A 模块的功能
+## 10. 不属于 A 模块的功能
 
 以下能力在文档中归属其他模块，A 模块只提供基础数据：
 
@@ -338,7 +397,7 @@ Electron 主进程启动后会开启一个每分钟执行一次的检查器：
 | Markdown 导出文章 | 模块 D |
 | 全文搜索 | 更偏模块 D 或后续 P1 可选 |
 
-## 10. 验证方式
+## 11. 验证方式
 
 已执行：
 
@@ -348,7 +407,57 @@ npm run build
 
 结果：构建通过。
 
-建议手动测试：
+### 11.1 固定本地测试用例
+
+新增目录：
+
+- `test/README.md`
+- `test/server.cjs`
+- `test/opml/module-a-basic.opml`
+- `test/opml/module-a-preview-status.opml`
+
+从项目根目录启动本地测试 RSS 服务：
+
+```powershell
+node test/server.cjs
+```
+
+服务地址：
+
+```text
+http://127.0.0.1:8787
+```
+
+测试 Feed：
+
+| Feed | URL | 测试目的 |
+|---|---|---|
+| Mercury Basic Feed | `http://127.0.0.1:8787/feed/basic.xml` | 添加订阅、文章入库、打开文章 |
+| Mercury Growing Feed | `http://127.0.0.1:8787/feed/growing.xml` | 刷新后新增文章 |
+| Mercury Flaky Feed | `http://127.0.0.1:8787/feed/flaky.xml` | 刷新失败隔离和错误展示 |
+| Mercury Duplicate Feed | `http://127.0.0.1:8787/feed/duplicates.xml` | URL 规范化和文章去重 |
+
+测试控制地址：
+
+| 控制地址 | 作用 |
+|---|---|
+| `http://127.0.0.1:8787/control/growing/add` | 让 growing feed 新增第三篇文章 |
+| `http://127.0.0.1:8787/control/growing/reset` | 重置 growing feed 为两篇文章 |
+| `http://127.0.0.1:8787/control/flaky/fail` | 让 flaky feed 返回 HTTP 503 |
+| `http://127.0.0.1:8787/control/flaky/ok` | 恢复 flaky feed 正常响应 |
+
+OPML 测试文件：
+
+- `test/opml/module-a-basic.opml`
+- `test/opml/module-a-preview-status.opml`
+
+详细手测步骤见：
+
+```text
+test/README.md
+```
+
+### 11.2 外部真实 Feed 建议
 
 1. 添加 `https://www.ruanyifeng.com/blog/atom.xml`。
 2. 刷新订阅源，确认文章不会重复插入。

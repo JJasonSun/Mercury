@@ -196,7 +196,139 @@ git -c safe.directory=C:/Users/16955/Desktop/Mercury ...
 
 这样只对当前命令生效，不污染全局配置。
 
-## 8. 验证结果
+## 8. Electron 被当作 Node 运行
+
+### 现象
+
+启动 Electron 时主进程报错：
+
+```text
+TypeError: Cannot read properties of undefined (reading 'whenReady')
+```
+
+或者执行 Electron 版本检查时显示的是系统 Node 版本，而不是 Electron 版本。
+
+### 原因
+
+当前 shell 环境存在：
+
+```powershell
+ELECTRON_RUN_AS_NODE=1
+```
+
+该环境变量会让 Electron 按 Node 模式运行，导致 `require('electron')` 返回 Electron 可执行文件路径，而不是主进程 API 对象。
+
+### 解决方式
+
+启动 Electron 前清空该环境变量：
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE = $null
+node_modules\electron\dist\electron.exe . --dev
+```
+
+后续建议将 Windows 开发启动脚本固定下来，避免每次手动排查。
+
+## 9. better-sqlite3 Electron 预编译包下载失败
+
+### 现象
+
+`npx electron-builder install-app-deps` 尝试重建 `better-sqlite3` 时，本机缺少 Visual Studio C++ Build Tools，导致源码编译失败。
+
+直接使用 GitHub 下载 `better-sqlite3` 的 Electron ABI 预编译包时，也可能因为网络超时失败。
+
+### 解决方式
+
+使用 npmmirror 下载 Electron 38 / ABI 139 / win32-x64 的预编译包：
+
+```powershell
+curl.exe -L -o node_modules\better-sqlite3\prebuilds\better-sqlite3-v12.10.0-electron-v139-win32-x64.tar.gz https://npmmirror.com/mirrors/better-sqlite3/v12.10.0/better-sqlite3-v12.10.0-electron-v139-win32-x64.tar.gz
+```
+
+然后在 `better-sqlite3` 目录下安装本地预编译包：
+
+```powershell
+cd node_modules\better-sqlite3
+npx prebuild-install --runtime electron --target 38.4.0 --arch x64 --platform win32 --verbose
+```
+
+该方式避免了本机必须安装 C++ 编译工具链的问题。
+
+## 10. 本地测试 Feed 404
+
+### 现象
+
+访问测试 Feed：
+
+```text
+http://127.0.0.1:8787/feed/basic.xml
+```
+
+返回：
+
+```text
+HTTP/1.0 404 File not found
+Server: SimpleHTTP/0.6 Python
+```
+
+### 原因
+
+8787 端口被之前临时启动的 Python 静态文件服务占用。该服务只提供旧测试文件，不提供新建的动态路由 `/feed/basic.xml`、`/feed/growing.xml` 等。
+
+### 解决方式
+
+1. 查找 8787 端口占用进程：
+
+```powershell
+Get-NetTCPConnection -LocalPort 8787 -State Listen
+```
+
+2. 停掉旧进程：
+
+```powershell
+Stop-Process -Id <PID> -Force
+```
+
+3. 从项目根目录启动新的模块 A 测试服务：
+
+```powershell
+node test/server.cjs
+```
+
+验证：
+
+```powershell
+curl http://127.0.0.1:8787/feed/basic.xml
+```
+
+应返回 RSS XML。
+
+## 11. 本轮优化验证方法
+
+本轮新增固定手测夹具：
+
+- `test/server.cjs`
+- `test/README.md`
+- `test/opml/module-a-basic.opml`
+- `test/opml/module-a-preview-status.opml`
+
+从项目根目录运行：
+
+```powershell
+node test/server.cjs
+```
+
+然后在 Mercury UI 中按 `test/README.md` 的测试用例验证：
+
+- 添加订阅和文章入库。
+- 刷新后新增文章。
+- 刷新失败隔离和错误展示。
+- URL 规范化和文章去重。
+- OPML 导入预览状态。
+- 标记未读。
+- 删除订阅源前显示文章数量。
+
+## 12. 验证结果
 
 最终验证：
 

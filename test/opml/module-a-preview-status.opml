@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>Mercury Module A OPML Preview Status</title>
+  </head>
+  <body>
+    <outline text="Existing feed" title="Existing feed" type="rss" xmlUrl="http://127.0.0.1:8787/feed/basic.xml" />
+    <outline text="Duplicate feed first copy" title="Duplicate feed first copy" type="rss" xmlUrl="http://127.0.0.1:8787/feed/growing.xml" />
+    <outline text="Duplicate feed second copy" title="Duplicate feed second copy" type="rss" xmlUrl="http://127.0.0.1:8787/feed/growing.xml" />
+    <outline text="New feed from OPML" title="New feed from OPML" type="rss" xmlUrl="http://127.0.0.1:8787/feed/new-from-opml.xml" />
+    <outline text="Invalid URL feed" title="Invalid URL feed" type="rss" xmlUrl="http://%" />
+  </body>
+</opml>

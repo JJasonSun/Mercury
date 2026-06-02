@@ -12,6 +12,7 @@ export interface FeedRecord {
   faviconUrl?: string | null
   refreshIntervalMinutes?: number
   lastRefreshedAt?: number | null
+  lastError?: string | null
   createdAt: number
   updatedAt: number
 }
@@ -48,9 +49,11 @@ interface FeedRow {
   favicon_url: string | null
   refresh_interval_minutes: number | null
   last_refreshed_at: number | null
+  last_error: string | null
   created_at: number
   updated_at: number
   unread_count?: number
+  article_count?: number
 }
 
 interface EntryRow {
@@ -92,10 +95,10 @@ export class Repository {
       .prepare(
         `INSERT INTO feeds (
           id, title, feed_title, custom_title, url, description, site_url, favicon_url,
-          refresh_interval_minutes, last_refreshed_at, created_at, updated_at
+          refresh_interval_minutes, last_refreshed_at, last_error, created_at, updated_at
         ) VALUES (
           @id, @title, @feedTitle, @customTitle, @url, @description, @siteUrl, @faviconUrl,
-          @refreshIntervalMinutes, @lastRefreshedAt, @createdAt, @updatedAt
+          @refreshIntervalMinutes, @lastRefreshedAt, @lastError, @createdAt, @updatedAt
         )`
       )
       .run({
@@ -103,7 +106,8 @@ export class Repository {
         feedTitle: feed.feedTitle ?? feed.title,
         customTitle: feed.customTitle ?? null,
         refreshIntervalMinutes: feed.refreshIntervalMinutes ?? 0,
-        lastRefreshedAt: feed.lastRefreshedAt ?? feed.updatedAt
+        lastRefreshedAt: feed.lastRefreshedAt ?? feed.updatedAt,
+        lastError: feed.lastError ?? null
       })
   }
 
@@ -125,6 +129,7 @@ export class Repository {
              favicon_url = @faviconUrl,
              refresh_interval_minutes = @refreshIntervalMinutes,
              last_refreshed_at = @lastRefreshedAt,
+             last_error = @lastError,
              updated_at = @updatedAt
          WHERE id = @id`
       )
@@ -142,7 +147,8 @@ export class Repository {
         siteUrl: fields.siteUrl ?? current.site_url,
         faviconUrl: fields.faviconUrl ?? current.favicon_url,
         refreshIntervalMinutes: fields.refreshIntervalMinutes ?? current.refresh_interval_minutes ?? 0,
-        lastRefreshedAt: fields.lastRefreshedAt ?? current.last_refreshed_at,
+        lastRefreshedAt: fields.lastRefreshedAt !== undefined ? fields.lastRefreshedAt : current.last_refreshed_at,
+        lastError: fields.lastError !== undefined ? fields.lastError : current.last_error,
         updatedAt: fields.updatedAt ?? Date.now()
       })
   }
@@ -173,7 +179,8 @@ export class Repository {
     const rows = this.db
       .prepare(
         `SELECT feeds.*,
-                COALESCE(SUM(CASE WHEN entries.is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
+                COALESCE(SUM(CASE WHEN entries.is_read = 0 THEN 1 ELSE 0 END), 0) AS unread_count,
+                COUNT(entries.id) AS article_count
          FROM feeds
          LEFT JOIN entries ON entries.feed_id = feeds.id
          GROUP BY feeds.id
@@ -188,9 +195,19 @@ export class Repository {
       customTitle: this.getCustomTitle(row),
       url: String(row.url),
       unreadCount: Number(row.unread_count ?? 0),
+      articleCount: Number(row.article_count ?? 0),
       refreshIntervalMinutes: Number(row.refresh_interval_minutes ?? 0),
-      lastRefreshedAt: this.formatDate(row.last_refreshed_at)
+      lastRefreshedAt: this.formatDate(row.last_refreshed_at),
+      lastError: row.last_error ?? null
     }))
+  }
+
+  getArticleCountByFeed(feedId: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS count FROM entries WHERE feed_id = ?').get(feedId) as
+      | { count: number }
+      | undefined
+
+    return Number(row?.count ?? 0)
   }
 
   upsertEntry(entry: EntryRecord): { id: string; inserted: boolean } {
@@ -364,12 +381,31 @@ export class Repository {
     }
 
     if (!entry.guid) {
+      return this.findExistingEntryByWeakKey(entry)
+    }
+
+    const byGuid = this.db
+      .prepare('SELECT * FROM entries WHERE feed_id = ? AND guid = ?')
+      .get(entry.feedId, entry.guid) as EntryRow | undefined
+
+    return byGuid ?? this.findExistingEntryByWeakKey(entry)
+  }
+
+  private findExistingEntryByWeakKey(entry: EntryRecord): EntryRow | undefined {
+    if (!entry.title || !entry.publishedAt || !entry.url) {
       return undefined
     }
 
     return this.db
-      .prepare('SELECT * FROM entries WHERE feed_id = ? AND guid = ?')
-      .get(entry.feedId, entry.guid) as EntryRow | undefined
+      .prepare(
+        `SELECT *
+         FROM entries
+         WHERE feed_id = ?
+           AND LOWER(TRIM(title)) = ?
+           AND published_at = ?
+           AND url = ?`
+      )
+      .get(entry.feedId, normalizeTitleKey(entry.title), entry.publishedAt, entry.url) as EntryRow | undefined
   }
 
   private setReadState(entryId: string, isRead: boolean): void {
@@ -426,4 +462,8 @@ function normalizeNullableTitle(value?: string | null): string | null {
 
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function normalizeTitleKey(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
 }

@@ -31,6 +31,16 @@ type FetchText = (url: string) => Promise<string>
 
 const DEFAULT_USER_AGENT = 'Mercury/1.0 RSS Reader'
 const MAX_REFRESH_INTERVAL_MINUTES = 60 * 24 * 30
+const TRACKING_QUERY_PARAMS = new Set([
+  'fbclid',
+  'gclid',
+  'dclid',
+  'mc_cid',
+  'mc_eid',
+  'igshid',
+  'ref',
+  'spm'
+])
 
 export class FeedService implements IFeedService {
   private readonly parser = new Parser()
@@ -67,6 +77,7 @@ export class FeedService implements IFeedService {
       faviconUrl: null,
       refreshIntervalMinutes: 0,
       lastRefreshedAt: now,
+      lastError: null,
       createdAt: now,
       updatedAt: now
     })
@@ -145,16 +156,22 @@ export class FeedService implements IFeedService {
       throw new Error(`Feed not found: ${feedId}`)
     }
 
-    const parsed = await this.parseFeedUrl(feed.url)
     const now = Date.now()
-    this.repository.updateFeed(feedId, {
-      feedTitle: parsed.title?.trim() || feed.feed_title || feed.title,
-      description: parsed.description ?? feed.description,
-      siteUrl: parsed.link ?? feed.site_url,
-      lastRefreshedAt: now,
-      updatedAt: now
-    })
-    this.saveFeedItems(feedId, parsed.items)
+    try {
+      const parsed = await this.parseFeedUrl(feed.url)
+      this.repository.updateFeed(feedId, {
+        feedTitle: parsed.title?.trim() || feed.feed_title || feed.title,
+        description: parsed.description ?? feed.description,
+        siteUrl: parsed.link ?? feed.site_url,
+        lastRefreshedAt: now,
+        lastError: null,
+        updatedAt: now
+      })
+      this.saveFeedItems(feedId, parsed.items)
+    } catch (error) {
+      this.recordRefreshFailure(feed.id, now, error)
+      throw error
+    }
 
     return this.repository.getArticlesByFeed(feedId)
   }
@@ -162,7 +179,11 @@ export class FeedService implements IFeedService {
   async refreshAllFeeds(): Promise<void> {
     const feeds = this.repository.getAllFeedRows()
     for (const feed of feeds) {
-      await this.refreshFeed(feed.id)
+      try {
+        await this.refreshFeed(feed.id)
+      } catch (error) {
+        console.error(`Refresh failed for feed ${feed.id}:`, error)
+      }
     }
   }
 
@@ -183,10 +204,6 @@ export class FeedService implements IFeedService {
       try {
         await this.refreshFeed(feed.id)
       } catch (error) {
-        this.repository.updateFeed(feed.id, {
-          lastRefreshedAt: now,
-          updatedAt: feed.updated_at
-        })
         console.error(`Auto refresh failed for feed ${feed.id}:`, error)
       }
     }
@@ -200,7 +217,7 @@ export class FeedService implements IFeedService {
 
   async previewOpml(filePath: string): Promise<OpmlFeed[]> {
     const xml = await fs.readFile(filePath, 'utf-8')
-    return parseOpmlFeeds(xml).map((feed) => ({ title: feed.title, url: feed.url }))
+    return this.decorateOpmlFeeds(parseOpmlFeeds(xml))
   }
 
   async importOpmlFeeds(importedFeeds: OpmlFeed[]): Promise<OpmlImportResult> {
@@ -300,12 +317,13 @@ export class FeedService implements IFeedService {
       if (!url) {
         continue
       }
+      const normalizedUrl = normalizeEntryUrl(url)
 
       this.repository.upsertEntry({
         id: randomUUID(),
         feedId,
-        title: item.title?.trim() || url,
-        url,
+        title: item.title?.trim() || normalizedUrl,
+        url: normalizedUrl,
         author: item.creator ?? item.author ?? null,
         publishedAt: parseDate(item.isoDate ?? item.pubDate),
         guid: item.guid ?? item.id ?? null,
@@ -314,6 +332,57 @@ export class FeedService implements IFeedService {
         createdAt: now
       })
     }
+  }
+
+  private decorateOpmlFeeds(feeds: OpmlFeed[]): OpmlFeed[] {
+    const seen = new Set<string>()
+
+    return feeds.map((feed) => {
+      let normalizedUrl = ''
+      try {
+        normalizedUrl = normalizeUrl(feed.url)
+      } catch (error) {
+        return {
+          ...feed,
+          status: 'invalid',
+          message: toErrorMessage(error)
+        }
+      }
+
+      if (seen.has(normalizedUrl)) {
+        return {
+          ...feed,
+          normalizedUrl,
+          status: 'duplicate',
+          message: 'OPML 文件中重复'
+        }
+      }
+      seen.add(normalizedUrl)
+
+      if (this.repository.getFeedRowByUrl(normalizedUrl)) {
+        return {
+          ...feed,
+          normalizedUrl,
+          status: 'existing',
+          message: '已存在'
+        }
+      }
+
+      return {
+        ...feed,
+        normalizedUrl,
+        status: 'new',
+        message: '新增'
+      }
+    })
+  }
+
+  private recordRefreshFailure(feedId: string, timestamp: number, error: unknown): void {
+    this.repository.updateFeed(feedId, {
+      lastRefreshedAt: timestamp,
+      lastError: toErrorMessage(error),
+      updatedAt: timestamp
+    })
   }
 }
 
@@ -403,6 +472,30 @@ function normalizeUrl(url: string): string {
 
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
   return new URL(withProtocol).toString()
+}
+
+function normalizeEntryUrl(url: string): string {
+  const trimmed = url.trim()
+  if (!trimmed) {
+    return trimmed
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (key.toLowerCase().startsWith('utm_') || TRACKING_QUERY_PARAMS.has(key.toLowerCase())) {
+        parsed.searchParams.delete(key)
+      }
+    }
+
+    if (parsed.pathname.length > 1) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/'
+    }
+
+    return parsed.toString()
+  } catch {
+    return trimmed.replace(/\/+$/, '')
+  }
 }
 
 function normalizeRefreshIntervalMinutes(value: number): number {

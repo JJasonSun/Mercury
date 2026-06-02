@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>Mercury Module A Basic Import</title>
+  </head>
+  <body>
+    <outline text="Module A Feeds" title="Module A Feeds">
+      <outline text="Mercury Basic Feed" title="Mercury Basic Feed" type="rss" xmlUrl="http://127.0.0.1:8787/feed/basic.xml" />
+      <outline text="Mercury Growing Feed" title="Mercury Growing Feed" type="rss" xmlUrl="http://127.0.0.1:8787/feed/growing.xml" />
+      <outline text="Mercury Flaky Feed" title="Mercury Flaky Feed" type="rss" xmlUrl="http://127.0.0.1:8787/feed/flaky.xml" />
+    </outline>
+  </body>
+</opml>

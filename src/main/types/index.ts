@@ -5,13 +5,18 @@ export interface Feed {
   customTitle?: string | null
   url: string
   unreadCount: number
+  articleCount?: number
   refreshIntervalMinutes?: number
   lastRefreshedAt?: string
+  lastError?: string | null
 }
 
 export interface OpmlFeed {
   title: string
   url: string
+  normalizedUrl?: string
+  status?: 'new' | 'existing' | 'duplicate' | 'invalid'
+  message?: string
 }
 
 export interface OpmlImportFailure {

@@ -21,6 +21,10 @@
             <span>🏷️</span>
             <span>添加标签</span>
           </button>
+          <button class="action-btn" @click="$emit('mark-unread')">
+            <span>●</span>
+            <span>标记未读</span>
+          </button>
           <button class="action-btn" @click="$emit('export')">
         <span>📤</span>
           <span>导出</span>
@@ -77,6 +81,7 @@ defineEmits<{
   'summarize': []
   'translate': []
   'add-tag': []
+  'mark-unread': []
   'export': []
 }>()
 </script>
