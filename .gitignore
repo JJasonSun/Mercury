@@ -1,5 +1,10 @@
-node_modules
+﻿node_modules
 dist
 .git
 *.log
 .DS_Store
+.env
+.omo
+
+# LLM config with API key
+src/main/llm/config.json
