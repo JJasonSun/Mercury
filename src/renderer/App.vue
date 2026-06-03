@@ -639,8 +639,27 @@ const handleTranslate = () => {
   alert('AI 翻译功能（占位）')
 }
 
-const handleAddTag = () => {
-  alert('添加标签功能（占位）')
+const handleAddTag = async () => {
+  if (!window.electronAPI || !selectedArticleId.value) {
+    alert('当前环境不支持添加标签')
+    return
+  }
+
+  const tagName = prompt('请输入标签名称：')
+  if (!tagName || !tagName.trim()) {
+    return
+  }
+
+  try {
+    await window.electronAPI.addTagToArticle(selectedArticleId.value, tagName.trim())
+    // 重新加载文章内容以获取更新后的标签
+    selectedArticleContent.value = await window.electronAPI.getArticleContent(selectedArticleId.value)
+    // 重新加载文章列表以更新标签
+    articleList.value = await window.electronAPI.getArticleList(selectedFeedId.value)
+  } catch (error) {
+    console.error('Failed to add tag', error)
+    alert(`添加标签失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const handleMarkUnread = async () => {
@@ -661,8 +680,29 @@ const handleMarkUnread = async () => {
   }
 }
 
-const handleExport = () => {
-  alert('导出 Markdown 功能（占位）')
+const handleExport = async () => {
+  if (!window.electronAPI || !selectedArticleId.value || !selectedArticleContent.value) {
+    alert('当前环境不支持导出')
+    return
+  }
+
+  try {
+    // 生成默认文件名
+    const filename = selectedArticleContent.value.title.replace(/[<>:"/\\|?*]/g, '_').substring(0, 50) + '.md'
+
+    // 选择保存路径
+    const filePath = await window.electronAPI.selectMarkdownExportPath(filename)
+    if (!filePath) {
+      return
+    }
+
+    // 导出文件
+    await window.electronAPI.exportMarkdown(selectedArticleId.value, filePath)
+    alert('导出成功！')
+  } catch (error) {
+    console.error('Failed to export markdown', error)
+    alert(`导出失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 </script>
 
