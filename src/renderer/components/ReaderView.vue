@@ -38,14 +38,34 @@
 
       <main class="reader-content">
         <div class="content-section">
-          <section v-if="article.summary" class="ai-section">
-            <div class="ai-section-title">AI &#25688;&#35201;</div>
-            <div class="ai-content">{{ article.summary }}</div>
+          <!-- AI 摘要区域 -->
+          <section v-if="article.summary || isSummarizing" class="ai-section">
+            <div class="ai-section-header">
+              <div class="ai-section-title">AI &#25688;&#35201;</div>
+              <button v-if="article.summary && !isSummarizing" class="regenerate-btn" @click="$emit('summarize')">
+                &#128260; &#37325;&#26032;&#29983;&#25104;
+              </button>
+            </div>
+            <div v-if="isSummarizing" class="ai-loading">
+              <div class="loading-spinner"></div>
+              <span>&#27491;&#22312;&#29983;&#25104;&#25688;&#35201;...</span>
+            </div>
+            <div v-else class="ai-content">{{ article.summary }}</div>
           </section>
 
-          <section v-if="article.translation" class="ai-section">
-            <div class="ai-section-title">AI &#32763;&#35793;</div>
-            <div class="ai-content">{{ article.translation }}</div>
+          <!-- AI 翻译区域 -->
+          <section v-if="article.translation || isTranslating" class="ai-section">
+            <div class="ai-section-header">
+              <div class="ai-section-title">AI &#32763;&#35793;</div>
+              <button v-if="article.translation && !isTranslating" class="regenerate-btn" @click="$emit('translate')">
+                &#128260; &#37325;&#26032;&#29983;&#25104;
+              </button>
+            </div>
+            <div v-if="isTranslating" class="ai-loading">
+              <div class="loading-spinner"></div>
+              <span>&#27491;&#22312;&#29983;&#25104;&#32763;&#35793;...</span>
+            </div>
+            <div v-else class="ai-content">{{ article.translation }}</div>
           </section>
 
           <article v-if="hasCleanedHtml" class="article-content" v-html="article.cleanedHtml"></article>
@@ -83,6 +103,8 @@ const props = defineProps<{
     translation?: string
     tags: string[]
   } | null
+  isSummarizing?: boolean
+  isTranslating?: boolean
 }>()
 
 defineEmits<{
@@ -205,11 +227,56 @@ const hasCleanedHtml = computed(() => Boolean(props.article?.cleanedHtml?.trim()
   border-radius: 4px;
 }
 
+.ai-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
 .ai-section-title {
   font-size: 14px;
   font-weight: 650;
   color: #2563eb;
-  margin-bottom: 10px;
+}
+
+.ai-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #e5e7eb;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.regenerate-btn {
+  font-size: 12px;
+  color: #2563eb;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.regenerate-btn:hover {
+  background: #eff6ff;
 }
 
 .ai-content {

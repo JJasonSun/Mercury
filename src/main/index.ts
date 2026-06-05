@@ -7,7 +7,9 @@ import { CleaningService } from './services/CleaningService'
 import { ExportService } from './services/ExportService'
 import { FeedService } from './services/FeedService'
 import { SettingsService } from './services/SettingsService'
+import { SummaryService } from './services/SummaryService'
 import { TagService } from './services/TagService'
+import { TranslationService } from './services/TranslationService'
 import { LLMConfig, OpmlFeed } from './types'
 
 let mainWindow: BrowserWindow | null = null
@@ -16,6 +18,8 @@ let articleService: ArticleService | null = null
 let tagService: TagService | null = null
 let exportService: ExportService | null = null
 let settingsService: SettingsService | null = null
+let summaryService: SummaryService | null = null
+let translationService: TranslationService | null = null
 let autoRefreshTimer: NodeJS.Timeout | null = null
 
 const AUTO_REFRESH_CHECK_INTERVAL_MS = 60 * 1000
@@ -172,9 +176,27 @@ function registerIpcHandlers() {
   ipcMain.handle('save-setting', async (_event, key: string, value: string) =>
     getSettingsService().saveSetting(key, value)
   )
+
+  // 模块 C: AI 摘要与翻译
+  ipcMain.handle('summarize-article', async (_event, articleId: string) => {
+    try {
+      const summary = await getSummaryService().summarize(articleId)
+      return { success: true, summary }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  ipcMain.handle('translate-article', async (_event, articleId: string, targetLang: string) => {
+    try {
+      const translation = await getTranslationService().translate(articleId, targetLang)
+      return { success: true, translation }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
 }
 
-function initializeServices() {
+async function initializeServices() {
   const database = initDatabase()
   const repository = new Repository(database)
   const cleaningService = new CleaningService()
@@ -183,6 +205,12 @@ function initializeServices() {
   tagService = new TagService(repository)
   exportService = new ExportService(repository, articleService)
   settingsService = new SettingsService(repository)
+
+  // 初始化 AI 服务（需要从 SettingsService 获取 LLM 配置）
+  const llmConfig = await settingsService.getLLMConfig()
+  summaryService = new SummaryService(llmConfig, repository, cleaningService)
+  translationService = new TranslationService(llmConfig, repository, cleaningService)
+
   startAutoRefreshScheduler()
 }
 
@@ -218,6 +246,20 @@ function getSettingsService(): SettingsService {
     throw new Error('SettingsService is not initialized')
   }
   return settingsService
+}
+
+function getSummaryService(): SummaryService {
+  if (!summaryService) {
+    throw new Error('SummaryService is not initialized')
+  }
+  return summaryService
+}
+
+function getTranslationService(): TranslationService {
+  if (!translationService) {
+    throw new Error('TranslationService is not initialized')
+  }
+  return translationService
 }
 
 function cloneForIpc<T>(value: T): T {

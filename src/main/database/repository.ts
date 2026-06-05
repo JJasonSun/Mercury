@@ -322,8 +322,8 @@ export class Repository {
       rawHtml: row.raw_html ?? undefined,
       cleanedHtml: row.cleaned_html ?? undefined,
       cleanedMarkdown: row.cleaned_markdown ?? undefined,
-      summary: '',
-      translation: '',
+      summary: this.getSummaryByEntry(entryId) || '',
+      translation: this.getTranslationByEntry(entryId) || '',
       tags: this.getArticleTags(entryId).map((tag) => tag.name)
     }
   }
@@ -537,6 +537,154 @@ export class Repository {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       )
       .run(key, value, now)
+  }
+
+  // ============ AI 结果管理 ================
+
+  /**
+   * 保存 AI 运行记录
+   * @param entryId 文章 ID
+   * @param agentType 代理类型（'summary' 或 'translation'）
+   * @param inputText 输入文本
+   * @returns 运行记录 ID
+   */
+  saveAgentRun(entryId: string, agentType: 'summary' | 'translation', inputText: string): string {
+    const agentRunId = randomUUID()
+    const now = Date.now()
+    this.db
+      .prepare(
+        `INSERT INTO agent_runs (id, entry_id, agent_type, input_text, status, started_at)
+         VALUES (?, ?, ?, ?, 'running', ?)`
+      )
+      .run(agentRunId, entryId, agentType, inputText, now)
+    return agentRunId
+  }
+
+  /**
+   * 更新 AI 运行状态
+   * @param agentRunId 运行记录 ID
+   * @param status 状态（'completed' 或 'failed'）
+   * @param outputText 输出文本（成功时）
+   * @param errorMessage 错误信息（失败时）
+   */
+  updateAgentRunStatus(agentRunId: string, status: 'completed' | 'failed', outputText?: string, errorMessage?: string): void {
+    const now = Date.now()
+    this.db
+      .prepare(
+        `UPDATE agent_runs
+         SET status = ?, output_text = ?, error_message = ?, completed_at = ?
+         WHERE id = ?`
+      )
+      .run(status, outputText ?? null, errorMessage ?? null, now, agentRunId)
+  }
+
+  /**
+   * 获取文章的 AI 运行记录
+   * @param entryId 文章 ID
+   * @returns AI 运行记录数组
+   */
+  getAgentRunsByEntry(entryId: string): Array<{
+    id: string
+    agentType: string
+    inputText: string
+    outputText: string | null
+    status: string
+    errorMessage: string | null
+    startedAt: number
+    completedAt: number | null
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, agent_type, input_text, output_text, status, error_message, started_at, completed_at
+         FROM agent_runs
+         WHERE entry_id = ?
+         ORDER BY started_at DESC`
+      )
+      .all(entryId) as Array<{
+        id: string
+        agent_type: string
+        input_text: string
+        output_text: string | null
+        status: string
+        error_message: string | null
+        started_at: number
+        completed_at: number | null
+      }>
+
+    return rows.map((row) => ({
+      id: row.id,
+      agentType: row.agent_type,
+      inputText: row.input_text,
+      outputText: row.output_text,
+      status: row.status,
+      errorMessage: row.error_message,
+      startedAt: row.started_at,
+      completedAt: row.completed_at
+    }))
+  }
+
+  /**
+   * 获取文章的摘要
+   * @param entryId 文章 ID
+   * @returns 摘要字符串，如果没有则返回 null
+   */
+  getSummaryByEntry(entryId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT output_text
+         FROM agent_runs
+         WHERE entry_id = ? AND agent_type = 'summary' AND status = 'completed'
+         ORDER BY completed_at DESC
+         LIMIT 1`
+      )
+      .get(entryId) as { output_text: string } | undefined
+
+    return row?.output_text ?? null
+  }
+
+  /**
+   * 获取文章的翻译
+   * @param entryId 文章 ID
+   * @param targetLang 目标语言（可选）
+   * @returns 翻译字符串，如果没有则返回 null
+   */
+  getTranslationByEntry(entryId: string, targetLang?: string): string | null {
+    let query = `SELECT output_text
+                 FROM agent_runs
+                 WHERE entry_id = ? AND agent_type = 'translation' AND status = 'completed'`
+    const params: (string | undefined)[] = [entryId]
+
+    if (targetLang) {
+      query += ` AND input_text LIKE ?`
+      params.push(`%${targetLang}%`)
+    }
+
+    query += ` ORDER BY completed_at DESC LIMIT 1`
+
+    const row = this.db
+      .prepare(query)
+      .get(...params) as { output_text: string } | undefined
+
+    return row?.output_text ?? null
+  }
+
+  /**
+   * 保存 LLM 用量记录
+   * @param agentRunId 运行记录 ID
+   * @param model 模型名称
+   * @param promptTokens 输入 token 数
+   * @param completionTokens 输出 token 数
+   * @param totalTokens 总 token 数
+   */
+  saveLLMUsage(agentRunId: string, model: string, promptTokens: number, completionTokens: number, totalTokens: number): void {
+    const usageId = randomUUID()
+    const now = Date.now()
+    this.db
+      .prepare(
+        `INSERT INTO llm_usage (id, agent_run_id, model, prompt_tokens, completion_tokens, total_tokens, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(usageId, agentRunId, model, promptTokens, completionTokens, totalTokens, now)
   }
 }
 

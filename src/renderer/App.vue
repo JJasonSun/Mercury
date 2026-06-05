@@ -179,6 +179,8 @@ const useMockData = ref(true)
 const articleFilter = ref<ArticleFilter>('all')
 const isLoadingArticles = ref(false)
 const isRefreshing = ref(false)
+const isSummarizing = ref(false)
+const isTranslating = ref(false)
 const showAddSubscription = ref(false)
 const isAddingFeed = ref(false)
 const feedDialogError = ref('')
@@ -638,12 +640,66 @@ const handleExportOpml = async () => {
   }
 }
 
-const handleSummarize = () => {
-  alert('AI 摘要功能（占位）')
+const handleSummarize = async () => {
+  if (!window.electronAPI || !selectedArticleId.value) {
+    alert('当前环境不支持 AI 摘要或未选择文章')
+    return
+  }
+
+  isSummarizing.value = true
+  try {
+    const result = await window.electronAPI.summarizeArticle(selectedArticleId.value)
+    if (result.success) {
+      // 更新文章内容
+      if (selectedArticleContent.value) {
+        selectedArticleContent.value.summary = result.summary
+      }
+      // 重新加载文章内容以获取更新后的摘要
+      selectedArticleContent.value = await window.electronAPI.getArticleContent(selectedArticleId.value)
+      alert('摘要生成成功')
+    } else {
+      alert(`摘要生成失败：${result.error}`)
+    }
+  } catch (error) {
+    console.error('Failed to summarize article', error)
+    alert(`摘要生成失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    isSummarizing.value = false
+  }
 }
 
-const handleTranslate = () => {
-  alert('AI 翻译功能（占位）')
+const handleTranslate = async () => {
+  if (!window.electronAPI || !selectedArticleId.value) {
+    alert('当前环境不支持 AI 翻译或未选择文章')
+    return
+  }
+
+  // 弹出语言选择对话框
+  const targetLang = prompt('请输入目标语言代码（如 en, ja, ko）：')
+  if (!targetLang) {
+    return
+  }
+
+  isTranslating.value = true
+  try {
+    const result = await window.electronAPI.translateArticle(selectedArticleId.value, targetLang)
+    if (result.success) {
+      // 更新文章内容
+      if (selectedArticleContent.value) {
+        selectedArticleContent.value.translation = result.translation
+      }
+      // 重新加载文章内容以获取更新后的翻译
+      selectedArticleContent.value = await window.electronAPI.getArticleContent(selectedArticleId.value)
+      alert('翻译生成成功')
+    } else {
+      alert(`翻译生成失败：${result.error}`)
+    }
+  } catch (error) {
+    console.error('Failed to translate article', error)
+    alert(`翻译生成失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    isTranslating.value = false
+  }
 }
 
 const handleAddTag = () => {
