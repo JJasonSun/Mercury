@@ -472,7 +472,7 @@ try {
 ```json
 {
   "baseUrl": "https://chat.ecnu.edu.cn/open/api/v1",
-  "apiKey": "sk-3a6d410e57ff48ff8b010d891a95ecc1",
+  "apiKey": "your-api-key-here",
   "model": "ecnu-plus"
 }
 ```

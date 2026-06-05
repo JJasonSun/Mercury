@@ -1,14 +1,26 @@
 /**
  * 真实 API 测试脚本
  * 使用 ECNU API 测试摘要和翻译功能
+ *
+ * 使用方法：
+ * 1. 设置环境变量：export ECNU_API_KEY=your-api-key
+ * 2. 或者在命令行运行：ECNU_API_KEY=your-api-key node test-real-api.js
  */
 
 const { OpenAICompatibleProvider } = require('./dist/main/llm/provider')
 const { SummaryAgent, TranslationAgent } = require('./dist/main/llm/agents')
 
+// 从环境变量读取 API key
+const apiKey = process.env.ECNU_API_KEY
+if (!apiKey) {
+  console.error('错误：请设置 ECNU_API_KEY 环境变量')
+  console.error('使用方法：ECNU_API_KEY=your-api-key node test-real-api.js')
+  process.exit(1)
+}
+
 const config = {
   baseUrl: 'https://chat.ecnu.edu.cn/open/api/v1',
-  apiKey: 'sk-3a6d410e57ff48ff8b010d891a95ecc1',
+  apiKey: apiKey,
   model: 'ecnu-plus'
 }
 
